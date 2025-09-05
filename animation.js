@@ -1,15 +1,35 @@
+let totalSlots = 5;   // total number of fixed positions
+let numSquares = 5;   // how many to show (changes with key)
+let squareSize = 50;
+
 function setup() {
-  // Runs once at the start
-  createCanvas(600, 400); // width, height
-  background(220);        // light gray background
+  createCanvas(600, 200);
 }
 
 function draw() {
-  // Runs continuously after setup
-  background(220);        // clear frame each draw cycle
+  background(220);
 
-  // Example: a moving circle that follows your mouse
-  fill(100, 150, 255);
-  noStroke();
-  ellipse(mouseX, mouseY, 50, 50);
+  // spacing based on the total fixed slots
+  let spacing = width / (totalSlots + 1);
+
+  for (let i = 0; i < totalSlots; i++) {
+    let x = (i + 1) * spacing;
+    let y = height / 2;
+
+    if (i < numSquares) {
+      fill(0); // black for active squares
+    } else {
+      fill(200); // gray (or background color) for empty slots
+    }
+
+    noStroke();
+    rectMode(CENTER);
+    rect(x, y, squareSize, squareSize);
+  }
+}
+
+function keyPressed() {
+  if (key >= '0' && key <= '5') {   // only 0–5 are valid
+    numSquares = int(key);
+  }
 }
