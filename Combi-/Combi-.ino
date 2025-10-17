@@ -1,11 +1,11 @@
 #include <FastLED.h>
 
 /* ================= WS2812B STRIP ================= */
-#define LED_PIN       6
+#define LED_PIN       5
 #define LED_TYPE      WS2812B
 #define COLOR_ORDER   GRB
 #define NUM_LEDS      300       // total LEDs             
-#define BRIGHTNESS    150       // overall cap (0-255)    
+#define BRIGHTNESS    200       // overall cap (0-255)    
 
 CRGB leds[NUM_LEDS];
 

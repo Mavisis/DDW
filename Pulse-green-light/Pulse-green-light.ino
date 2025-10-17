@@ -1,15 +1,15 @@
 #include <FastLED.h>
 
-#define LED_PIN     6
+#define LED_PIN     5
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
 #define NUM_LEDS    300       // adjust to your strip length
-#define BRIGHTNESS  150       // max 255
+#define BRIGHTNESS  250       // max 255
 
 CRGB leds[NUM_LEDS];
 
 // === Breathing control variable ===
-int BREATH_SPEED = 20;  // smaller = slower breathing, larger = faster
+int BREATH_SPEED = 200;  // smaller = slower breathing, larger = faster
 
 void setup() {
   delay(300); // power-up safety delay
