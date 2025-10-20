@@ -1,168 +1,318 @@
-let serial;
-let latestData = "waiting for data";
+// sketch.js — Full-canvas flower visualizer (no layout logic)
 
-// Raw data from serial and derived display values (with cascade)
-let rawValues = [1, 1, 1, 1, 1];
-let displayValues = [1, 1, 1, 1, 1];
+// ========== Configuration ==========
+const CONFIG = {
+  display: {
+    useFullscreen: false,
+    fixedWidth: 1920,
+    fixedHeight: 1080,
+  },
+  timing: {
+    updateHz: 1,
+    activationDelayMs: 0,
+    deactivationDelayMs: 300,
+    fadeInMs: 15,
+    fadeOutMs: 90,
+  },
+  serial: {
+    portName: 'COM5',
+    baudRate: 9600,
+    useMockData: false, // Set to true for testing without Arduino
+  },
+  mock: {
+    coveredProbability: 0.45,
+  }
+};
 
-// Fade bookkeeping
-const lastActive = [0, 0, 0, 0, 0]; // ms timestamp when sensor last went 0
-const fadeDuration = 3000;         // 10 seconds
-
-// Images
-let flowers = []; // array of 5 p5.Image
-
-function preload() {
-  // Load your images here (same image or unique per slot)
-  // Replace with your own file names/paths if needed
-  flowers[0] = loadImage("./flower-images/Fase1.png");
-  flowers[1] = loadImage("./flower-images/Fase2.png");
-  flowers[2] = loadImage("./flower-images/Fase3.png");
-  flowers[3] = loadImage("./flower-images/Fase4.png");
-  flowers[4] = loadImage("./flower-images/Fase5.png");
+// ========== State Management ==========
+class FlowerState {
+  constructor() {
+    this.analogVals = new Array(5).fill(0);
+    this.digitalVals = new Array(5).fill(0);
+    this.visibleState = new Array(5).fill(false);
+    this.alphas = new Array(5).fill(0);
+    this.nextUpdateAt = 0;
+  }
 }
 
-function setup() {
-  createCanvas(windowWidth, windowHeight);
+class Sensor {
+  constructor() {
+    this.pending = null;
+    this.pendingStart = 0;
+  }
+  reset() {
+    this.pending = null;
+    this.pendingStart = 0;
+  }
+}
 
+// ========== Global Variables ==========
+const state = new FlowerState();
+const sensors = Array.from({ length: 5 }, () => new Sensor());
+
+let imgs = [];
+let woodBg = null;
+let serial; // Serial port object
+let serialConnected = false;
+
+// ========== Asset Loading ==========
+function preload() {
+  loadFlowerImages();
+  loadBackgroundImage();
+}
+
+function loadFlowerImages() {
+  for (let i = 0; i < 5; i++) {
+    const path = `flower-images/Fase${i}.png`;
+    imgs[i] = loadImage(
+      path,
+      () => console.log(`✓ Loaded ${path}`),
+      () => {
+        console.warn(`⚠️ Failed to load ${path}`);
+        imgs[i] = null;
+      }
+    );
+  }
+}
+
+function loadBackgroundImage() {
+  const path = 'flower-images/wood.png';
+  woodBg = loadImage(
+    path,
+    () => console.log(`✓ Loaded ${path}`),
+    () => {
+      console.warn(`⚠️ Failed to load ${path}`);
+      woodBg = null;
+    }
+  );
+}
+
+// ========== Setup & Resize ==========
+function setup() {
+  const { useFullscreen, fixedWidth, fixedHeight } = CONFIG.display;
+
+  if (useFullscreen) {
+    createCanvas(windowWidth, windowHeight);
+  } else {
+    createCanvas(fixedWidth, fixedHeight);
+  }
+
+  textFont('monospace');
+  textSize(18);
+
+  console.log('🌸 Flower Visualizer (full-canvas) initialized');
+
+  // Initialize serial connection
+  if (!CONFIG.serial.useMockData) {
+    initSerial();
+  } else {
+    console.log('📊 Using mock data mode');
+  }
+}
+
+function initSerial() {
   serial = new p5.SerialPort();
-  serial.list();
-  serial.open('COM5');
 
   serial.on('connected', serverConnected);
   serial.on('list', gotList);
   serial.on('data', gotData);
   serial.on('error', gotError);
-  serial.on('open', gotOpen);
-  serial.on('close', gotClose);
+  serial.on('open', portOpen);
+  serial.on('close', portClose);
 
-  imageMode(CORNER);
-  noStroke();
+  // List available ports
+  serial.list();
+
+  // Open the port
+  serial.open(CONFIG.serial.portName, { baudRate: CONFIG.serial.baudRate });
 }
 
 function windowResized() {
-  resizeCanvas(windowWidth, windowHeight);
-}
-
-function serverConnected() { print("Connected to Server"); }
-
-function gotList(thelist) {
-  print("List of Serial Ports:");
-  for (let i = 0; i < thelist.length; i++) {
-    print(i + " " + thelist[i]);
+  if (CONFIG.display.useFullscreen) {
+    resizeCanvas(windowWidth, windowHeight);
   }
 }
 
-function gotOpen() { print("Serial Port is Open"); }
-
-function gotClose() {
-  print("Serial Port is Closed");
-  latestData = "Serial Port is Closed";
-}
-
-function gotError(theerror) { print(theerror); }
-
-function gotData() {
-  let currentString = serial.readLine();
-  if (!currentString) return;
-  currentString = trim(currentString);
-  if (currentString.length === 0) return;
-
-  try {
-    const normalized = currentString.replace(/[\[\]\s]/g, "");
-    const parts = normalized.split(",").map(v => int(v));
-
-    if (parts.length === 5 && parts.every(v => v === 0 || v === 1)) {
-      rawValues = parts.slice();
-      applyCascade();
-      latestData = currentString;
-    }
-  } catch (err) {
-    console.error("Parse error:", err, "on:", currentString);
-  }
-}
-
-// Left→right cascade: if the first zero is at index k, force 0..k to 0.
-function applyCascade() {
-  displayValues = rawValues.slice();
-  const firstZeroIdx = rawValues.findIndex(v => v === 0);
-  if (firstZeroIdx !== -1) {
-    for (let i = 0; i <= firstZeroIdx; i++) displayValues[i] = 0;
-  }
-}
-
+// ========== Main Draw Loop ==========
 function draw() {
-  background(240);
+  drawBackground();
+  updateSensorData();
+  updateAlphas();
+  drawFlowersFullCanvas();
+}
 
-  const n = displayValues.length;
-  const margin = 20;
-  const gap = 14;
-  const totalGap = gap * (n - 1);
-  const slotW = (width - margin * 2 - totalGap) / n;
-  const slotH = min(height * 0.65, slotW * 1.2);
-  const y = (height - slotH) / 2;
+function drawBackground() {
+  if (!woodBg) {
+    background(40);
+    return;
+  }
 
+  const canvasAR = width / height;
+  const imgAR = woodBg.width / woodBg.height;
+  let dw, dh, dx, dy;
+
+  if (imgAR > canvasAR) {
+    // Image is wider - fit to height
+    dh = height;
+    dw = imgAR * dh;
+    dx = (width - dw) / 2;
+    dy = 0;
+  } else {
+    // Image is taller - fit to width
+    dw = width;
+    dh = dw / imgAR;
+    dx = 0;
+    dy = (height - dh) / 2;
+  }
+
+  image(woodBg, dx, dy, dw, dh);
+}
+
+function updateSensorData() {
   const now = millis();
 
-  for (let i = 0; i < n; i++) {
-    // When a sensor is "active" (0), refresh its last active time
-    if (displayValues[i] === 0) {
-      lastActive[i] = now;
-    }
-
-    // How long since last activation
-    const elapsed = now - lastActive[i];
-
-    // Opacity (alpha): 255 when just activated; then fades to 0 over 10s
-    let alpha = 0;
-    if (elapsed <= 0) {
-      alpha = 0; // never activated yet -> invisible
-    } else if (elapsed < fadeDuration) {
-      // Fade from 255 → 0 as time increases (linear)
-      alpha = map(elapsed, 0, fadeDuration, 255, 0);
-    } else {
-      alpha = 0; // fully faded
-    }
-
-    // Draw the image centered in its slot, preserving aspect ratio
-    const x = margin + i * (slotW + gap);
-    const img = flowers[i % flowers.length];
-
-    if (img && img.width > 0 && img.height > 0) {
-      // Fit image into slotW x slotH while keeping aspect
-      const imgAspect = img.width / img.height;
-      const slotAspect = slotW / slotH;
-
-      let drawW, drawH;
-      if (imgAspect > slotAspect) {
-        // image is wider → full width, scale height
-        drawW = slotW;
-        drawH = slotW / imgAspect;
-      } else {
-        // image is taller → full height, scale width
-        drawH = slotH;
-        drawW = slotH * imgAspect;
-      }
-      const offsetX = x + (slotW - drawW) / 2;
-      const offsetY = y + (slotH - drawH) / 2;
-
-      // Apply alpha via tint
-      tint(255, alpha);
-      image(img, offsetX, offsetY, drawW, drawH);
-      noTint(); // reset tint so it doesn't affect later draws
-    } else {
-      // Fallback: draw a placeholder rect if image not loaded
-      fill(200, 200, 200, alpha);
-      rect(x, y, slotW, slotH, 8);
-    }
+  // Only use mock data generation when in mock mode
+  if (CONFIG.serial.useMockData && now >= state.nextUpdateAt) {
+    const line = generateMockArduinoLine();
+    processArduinoData(line);
+    state.nextUpdateAt = now + 1000 / CONFIG.timing.updateHz;
   }
 
-  // Debug labels
-  noStroke();
-  fill(0);
-  textSize(14);
-  textAlign(LEFT, TOP);
-  text("Raw:     " + rawValues.join(","), margin, 10);
-  text("Display: " + displayValues.join(","), margin, 28);
-  text("Latest:  " + latestData, margin, 46);
+  // Real serial data is processed via gotData() callback
+}
+
+function updateAlphas() {
+  const dt = deltaTime;
+
+  for (let i = 0; i < 5; i++) {
+    const targetAlpha = state.visibleState[i] ? 255 : 0;
+    const tau = state.visibleState[i]
+      ? CONFIG.timing.fadeInMs
+      : CONFIG.timing.fadeOutMs;
+
+    state.alphas[i] = approachExp(state.alphas[i], targetAlpha, dt, tau);
+  }
+}
+
+// ========== Flower Rendering (Full Canvas) ==========
+function drawFlowersFullCanvas() {
+  // Draw in index order; later images will appear "on top"
+  // PNG transparency will allow lower layers to show through.
+  for (let i = 0; i < 5; i++) {
+    if (!imgs[i]) continue;
+    const alpha = constrain(state.alphas[i], 0, 255);
+    if (alpha <= 0.5) continue; // Skip invisible
+
+    push();
+    imageMode(CORNER);
+    tint(255, alpha);
+    image(imgs[i], 0, 0, width, height); // Fill the entire canvas
+    pop();
+  }
+}
+
+// ========== Debounce Logic ==========
+function applyDebounceRebounce(index, bitIsOne) {
+  const now = millis();
+  const isVisible = state.visibleState[index];
+  const sensor = sensors[index];
+  const { activationDelayMs, deactivationDelayMs } = CONFIG.timing;
+
+  if (bitIsOne) {
+    // Signal is HIGH
+    if (isVisible) {
+      sensor.reset();
+    } else if (sensor.pending !== 'on') {
+      sensor.pending = 'on';
+      sensor.pendingStart = now;
+    } else if (now - sensor.pendingStart >= activationDelayMs) {
+      state.visibleState[index] = true;
+      sensor.reset();
+    }
+  } else {
+    // Signal is LOW
+    if (!isVisible) {
+      sensor.reset();
+    } else if (sensor.pending !== 'off') {
+      sensor.pending = 'off';
+      sensor.pendingStart = now;
+    } else if (now - sensor.pendingStart >= deactivationDelayMs) {
+      state.visibleState[index] = false;
+      sensor.reset();
+    }
+  }
+}
+
+// ========== Utility Functions ==========
+function approachExp(current, target, dtMs, tauMs) {
+  if (tauMs <= 0) return target;
+  const k = Math.exp(-dtMs / tauMs);
+  return target + (current - target) * k;
+}
+
+function generateMockArduinoLine() {
+  const analog = Array.from({ length: 5 }, () => int(random(0, 1024)));
+  const digital = Array.from({ length: 5 }, () =>
+    random() < CONFIG.mock.coveredProbability ? 1 : 0
+  );
+  return analog.concat(digital);
+}
+
+function processArduinoData(line) {
+  state.analogVals = line.slice(0, 5);
+  state.digitalVals = line.slice(5, 10);
+
+  console.log(`[${line.join(",")}]`);
+
+  for (let i = 0; i < 5; i++) {
+    applyDebounceRebounce(i, state.digitalVals[i] === 1);
+  }
+}
+
+// ========== Serial Port Callbacks ==========
+function serverConnected() {
+  console.log('✓ Connected to serial server');
+}
+
+function portOpen() {
+  console.log('✓ Serial port opened:', CONFIG.serial.portName);
+  serialConnected = true;
+}
+
+function portClose() {
+  console.log('✗ Serial port closed');
+  serialConnected = false;
+}
+
+function gotList(thelist) {
+  console.log('📋 Available serial ports:');
+  for (let i = 0; i < thelist.length; i++) {
+    console.log(`  ${i}: ${thelist[i]}`);
+  }
+}
+
+function gotData() {
+  const currentString = serial.readLine();
+
+  if (!currentString) return;
+
+  trim(currentString);
+
+  if (!currentString) return;
+
+  console.log('📥 Received:', currentString);
+
+  // Expected format: analog0..4,digital0..4
+  const values = currentString.split(',').map(val => parseInt(val.trim(), 10));
+
+  if (values.length === 10 && values.every(v => !Number.isNaN(v))) {
+    processArduinoData(values);
+  } else {
+    console.warn('⚠️ Invalid data format. Expected 10 integers, got:', values.length, values);
+  }
+}
+
+function gotError(theerror) {
+  console.error('❌ Serial error:', theerror);
+  serialConnected = false;
 }

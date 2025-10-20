@@ -70,7 +70,7 @@ Pulse pulses[MAX_PULSES];
 #define PULSE_TAIL_LEN 24
 #define PULSE_HEAD_V 170
 #define PULSE_TAIL_V 124
-#define PULSE_SPEED_PER_FRAME 1.6f  // ~80 LEDs/sec at 50fps
+#define PULSE_SPEED_PER_FRAME 1.2f  // ~80 LEDs/sec at 50fps
 
 void spawnPulse(float startPos) {
   for (uint8_t i = 0; i < MAX_PULSES; i++) {
@@ -135,8 +135,8 @@ struct BurstState {
 };
 BurstState bursts[NSENS];  // 10 bytes instead of 20
 
-#define BURST_COUNT 5
-#define BURST_INTERVAL_FRAMES 25  // ~80ms at 50fps
+#define BURST_COUNT 10
+#define BURST_INTERVAL_FRAMES 50  // ~80ms at 50fps
 
 void startBurst(uint8_t si) {
   bursts[si].remaining = BURST_COUNT;
@@ -205,7 +205,7 @@ void setup() {
   for (uint8_t i = 0; i < MAX_PULSES; i++) pulses[i].alive = false;
   for (uint8_t i = 0; i < NSENS; i++) bursts[i] = { 0, 0 };
 
-  Serial.begin(115200);
+  Serial.begin(9600);
   Serial.println(F("A0,A1,A2,A3,A4,D0,D1,D2,D3,D4"));
 }
 
